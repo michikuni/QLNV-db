@@ -1,0 +1,82 @@
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          init-qlnv-db
+# Required-Start:    $remote_fs $syslog mysql 
+# Required-Stop:     $remote_fs $syslog
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Initialize QLNV Database
+# Description:       Initializes the employeedb database after MariaDB starts. Runs only once.
+### END INIT INFO
+
+set -e
+
+MARKER_FILE="/var/lib/mysql/.employeedb_initialized"
+DB_SQL_FILE="/etc/mysql/employeedb.sql"
+DB_NAME="employeedb"
+DB_USER="root"
+TIMEOUT=60
+
+do_db_init() {
+    if [ -f "${MARKER_FILE}" ]; then
+        echo "Database ${DB_NAME} đã được khởi tạo trước đó (marker file tồn tại)."
+        return 0
+    fi
+
+    echo "Chờ MariaDB sẵn sàng (tối đa ${TIMEOUT} giây)..."
+    COUNTER=0
+    while ! mysqladmin ping -u"${DB_USER}" --silent >/dev/null 2>&1; do
+        sleep 1
+        COUNTER=$((COUNTER + 1))
+        if [ ${COUNTER} -ge ${TIMEOUT} ]; then
+            echo "Lỗi: MariaDB không sẵn sàng sau ${TIMEOUT} giây."
+            exit 1
+        fi
+    done
+
+    echo "MariaDB đã sẵn sàng."
+    if [ -f "${MARKER_FILE}" ]; then
+        echo "Database ${DB_NAME} đã được khởi tạo trước đó (kiểm tra lần 2)."
+        return 0
+    fi
+
+    echo "Khởi tạo database ${DB_NAME}..."
+    mysql -u"${DB_USER}" -e "CREATE DATABASE IF NOT EXISTS ${DB_NAME};"
+
+    echo "Import dữ liệu từ ${DB_SQL_FILE}..."
+    mysql -u"${DB_USER}" "${DB_NAME}" < "${DB_SQL_FILE}"
+
+    echo "Khởi tạo database thành công. Tạo marker file."
+    touch "${MARKER_FILE}"
+
+    echo "Hoàn tất khởi tạo database ${DB_NAME}."
+}
+
+case "$1" in
+  start)
+    echo "Bắt đầu kiểm tra/khởi tạo database QLNV..."
+    do_db_init
+    ;;
+  stop)
+    echo "Yêu cầu dừng init-qlnv-db (không có hành động)."
+    ;;
+  restart|force-reload)
+    echo "Yêu cầu restart/reload init-qlnv-db (thực hiện lại logic start)."
+    do_db_init
+    ;;
+  status)
+    if [ -f "${MARKER_FILE}" ]; then
+        echo "Trạng thái init-qlnv-db: Đã hoàn thành (marker file tồn tại)."
+        exit 0
+    else
+        echo "Trạng thái init-qlnv-db: Chưa hoàn thành (marker file không tồn tại)."
+        exit 3
+    fi
+    ;;
+  *)
+    echo "Cách dùng: $0 {start|stop|status|restart}"
+    exit 1
+    ;;
+esac
+
+exit 0
